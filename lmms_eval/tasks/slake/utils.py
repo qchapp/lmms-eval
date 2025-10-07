@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os, re, zipfile
 from functools import lru_cache
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from PIL import Image
 from loguru import logger as eval_logger
@@ -9,8 +9,53 @@ from loguru import logger as eval_logger
 try:
     from huggingface_hub import snapshot_download
 except Exception:
-    snapshot_download = None  # we'll error cleanly if missing
+    snapshot_download = None  # we'll error clearly if it's missing
 
+
+# ---------- normalization & parsing ----------
+_ARTICLES = {"a", "an", "the"}
+_NUM_MAP = {
+    "zero":"0","one":"1","two":"2","three":"3","four":"4",
+    "five":"5","six":"6","seven":"7","eight":"8","nine":"9","ten":"10",
+}
+_YES = {"yes","y","yeah","yep","true","1"}
+_NO  = {"no","n","nope","false","0"}
+
+def _normalize_vqa(s: str) -> str:
+    """VQA-ish normalization: lowercase, strip, remove articles,
+    number-words→digits, light punctuation cleanup, yes/no aliasing."""
+    if not isinstance(s, str):
+        s = "" if s is None else str(s)
+    s = s.strip().lower()
+
+    if s in _YES: return "yes"
+    if s in _NO:  return "no"
+
+    s = re.sub(r"[^\w\s%/.-]", " ", s)  # keep %, /, -, .
+    toks = [t for t in re.split(r"\s+", s) if t]
+    out  = []
+    for t in toks:
+        if t in _ARTICLES:
+            continue
+        out.append(_NUM_MAP.get(t, t))
+    s2 = " ".join(out)
+    s2 = re.sub(r"\s+", " ", s2).strip().strip(".")
+    return s2
+
+def _extract_final_answer(text: str) -> str:
+    """Prefer the LAST 'Answer: ...'; else the last non-empty line."""
+    if not text:
+        return ""
+    m = list(re.finditer(r"answer\s*[:\-]\s*(.+)", text, re.IGNORECASE))
+    if m:
+        return m[-1].group(1).strip()
+    for line in reversed([ln.strip() for ln in text.splitlines()]):
+        if line:
+            return line
+    return text.strip()
+
+
+# ---------- image resolver for SLAKE ----------
 def _dir_nonempty(p: str) -> bool:
     return os.path.isdir(p) and bool(os.listdir(p))
 
@@ -30,15 +75,14 @@ def _extract_zip_once(zp: str, out_dir: str) -> Optional[str]:
 @lru_cache(maxsize=8)
 def _slake_image_root_for_repo(repo_id: str) -> str:
     """
-    Resolve (and if needed, download) the SLAKE images directory.
-    BoKelvin/SLAKE has an 'imgs.zip' that expands to an 'imgs/' folder containing
-    relative paths that match 'img_name' (e.g., 'xmlab100/source.jpg').  :contentReference[oaicite:1]{index=1}
+    Resolve (and download if needed) the 'imgs/' directory for SLAKE.
+    The HF dataset has 'imgs.zip' → 'imgs/' with relative paths in 'img_name'.
     """
     if not repo_id:
         eval_logger.error("SLAKE resolver: empty repo_id")
         return ""
     if snapshot_download is None:
-        eval_logger.error("huggingface_hub not installed. pip install -U huggingface_hub")
+        eval_logger.error("Please install huggingface_hub: pip install -U huggingface_hub")
         return ""
 
     snap = snapshot_download(
@@ -46,9 +90,7 @@ def _slake_image_root_for_repo(repo_id: str) -> str:
         repo_type="dataset",
         allow_patterns=["imgs/*", "imgs.zip"],
         resume_download=True,
-        local_files_only=False,
     )
-
     imgs_dir = os.path.join(snap, "imgs")
     if _dir_nonempty(imgs_dir):
         return imgs_dir
@@ -59,52 +101,29 @@ def _slake_image_root_for_repo(repo_id: str) -> str:
         if out and _dir_nonempty(out):
             return out
 
-    eval_logger.error(f"SLAKE resolver: could not find 'imgs/' in snapshot {snap}")
+    eval_logger.error(f"SLAKE resolver: imgs/ not found in snapshot {snap}")
     return ""
 
-# ---------------- Text / Target ----------------
 
-def _slake_norm(s: str) -> str:
-    """Lowercase, strip, collapse spaces, remove trivial punctuation for fair exact match."""
-    if not isinstance(s, str):
-        s = "" if s is None else str(s)
-    s = s.strip().lower()
-    # yes/no aliases
-    y = {"yes", "y", "yeah", "yep", "true", "1"}
-    n = {"no", "n", "nope", "false", "0"}
-    if s in y: return "yes"
-    if s in n: return "no"
-    # remove punctuation except alphanum and spaces
-    s = re.sub(r"[^a-z0-9\s.%/-]", "", s)   # keep %, /, - for medical terms
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
+# ---------- SLAKE task adapters ----------
 def slake_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[Dict[str, Any]] = None) -> str:
-    """
-    SLAKE sample fields (per HF viewer): img_name, question, answer, q_lang, answer_type (OPEN/CLOSED), ...  :contentReference[oaicite:2]{index=2}
-    """
-    pre = ""
-    post = ""
+    """Use q_lang filter if provided; otherwise just return the question."""
+    pre = post = ""
     lang_filter = None
     if lmms_eval_specific_kwargs:
         pre = lmms_eval_specific_kwargs.get("pre_prompt", "") or ""
         post = lmms_eval_specific_kwargs.get("post_prompt", "") or ""
         lang_filter = lmms_eval_specific_kwargs.get("q_lang")
-
     if lang_filter and str(doc.get("q_lang", "")).lower() != str(lang_filter).lower():
-        # Return a harmless prompt; process_results will skip scoring for non-matching lang.
-        return ""
-
+        return ""  # ignored later by process_results
     q = (doc.get("question") or "").strip()
     return f"{pre}{q}\n{post}".strip()
 
 def slake_doc_to_target(doc: Dict[str, Any]) -> str:
     return (doc.get("answer") or "").strip()
 
-# ---------------- Images ----------------
-
 def slake_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[Dict[str, Any]] = None):
-    """Return [PIL.Image] for the path referenced by 'img_name' inside the 'imgs/' tree."""
+    """Return [PIL.Image] by resolving 'img_name' under imgs/."""
     repo_id = ""
     if lmms_eval_specific_kwargs:
         repo_id = lmms_eval_specific_kwargs.get("dataset_repo") or lmms_eval_specific_kwargs.get("dataset_path") or ""
@@ -113,25 +132,21 @@ def slake_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional
 
     root = _slake_image_root_for_repo(repo_id)
     if not root:
-        raise RuntimeError("SLAKE images not available; ensure network/HF token and disk space are OK.")
+        raise RuntimeError("SLAKE images unavailable; ensure network/HF token and disk space.")
 
-    img_rel = str(doc.get("img_name") or "").strip().lstrip("/\\")
-    if not img_rel:
+    rel = str(doc.get("img_name") or "").strip().lstrip("/\\")
+    if not rel:
         return []
-
-    path = os.path.join(root, img_rel)
+    path = os.path.join(root, rel)
     if not os.path.isfile(path):
-        # fallback: search by basename if path mapping fails
-        basename = os.path.basename(img_rel)
+        base = os.path.basename(rel)
         for r, _d, files in os.walk(root):
-            if basename in files:
-                path = os.path.join(r, basename)
+            if base in files:
+                path = os.path.join(r, base)
                 break
-
     if not os.path.isfile(path):
-        eval_logger.warning(f"SLAKE: image not found for {img_rel}")
+        eval_logger.warning(f"SLAKE: image not found for {rel}")
         return []
-
     try:
         with Image.open(path) as im:
             return [im.convert("RGB")]
@@ -139,57 +154,42 @@ def slake_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional
         eval_logger.warning(f"SLAKE: failed to open {path}: {e}")
         return []
 
-# ---------------- Scoring ----------------
-
-def slake_process_results(doc: Dict[str, Any], results: List[str], lmms_eval_specific_kwargs: Optional[Dict[str, Any]] = None):
-    """
-    Produce per-item metric dict. If q_lang filter is set and doesn't match, skip this item.
-    """
+def slake_process_results(
+    doc: Dict[str, Any],
+    results: List[str],
+    lmms_eval_specific_kwargs: Optional[Dict[str, Any]] = None
+):
+    """Exact-match (after VQA normalization). Skip items that don't match q_lang filter."""
     lang_filter = None
     if lmms_eval_specific_kwargs:
         lang_filter = lmms_eval_specific_kwargs.get("q_lang")
     if lang_filter and str(doc.get("q_lang", "")).lower() != str(lang_filter).lower():
-        # returning empty dict means it won't contribute to metrics
-        return {}
+        return {}  # no metric emitted
 
     pred_raw = (results[0] if results else "") or ""
-    # Heuristic: if model outputs "Answer: ..." take the last such tag
-    m = list(re.finditer(r"answer\s*[:\-]\s*(.+)", pred_raw, flags=re.IGNORECASE))
-    if m:
-        pred = m[-1].group(1).strip()
-    else:
-        pred = pred_raw.strip()
-    target = slake_doc_to_target(doc)
+    pred = _extract_final_answer(pred_raw)
 
-    # normalize
-    p = _slake_norm(pred)
-    t = _slake_norm(target)
+    p = _normalize_vqa(pred)
+    t = _normalize_vqa(slake_doc_to_target(doc))
     score = 1.0 if (p == t and p != "") else 0.0
 
-    # build a stable id
     qid = str(doc.get("qid", "")) or f"{doc.get('img_name','')}::{doc.get('question','')}"[:256]
     return {"accuracy": {"question_id": qid, "score": score}}
 
 def slake_aggregate_results(results: List[Dict[str, Any]]) -> float:
-    """
-    Aggregate accuracy over items that actually produced a metric dict.
-    """
+    """Aggregate accuracy (%) over emitted item dicts."""
     if not results:
         return 0.0
     total = 0.0
     count = 0
     for r in results:
-        if not isinstance(r, dict): 
-            continue
-        acc = r.get("score")
-        # When called by lmms-eval's aggregator, we may receive dicts or already-extracted scores
+        acc = r.get("accuracy", {}).get("score", None)
         if acc is None:
-            # try nested {"accuracy":{"question_id":..., "score":...}}
-            acc = r.get("accuracy", {}).get("score", None)
+            acc = r.get("score", None)
         if acc is None:
             continue
         total += float(acc)
         count += 1
-    acc_pct = (total / count) * 100.0 if count else 0.0
-    eval_logger.info(f"SLAKE Accuracy: {acc_pct:.2f}")
-    return acc_pct
+    pct = (total / count) * 100.0 if count else 0.0
+    eval_logger.info(f"SLAKE Accuracy: {pct:.2f}")
+    return pct

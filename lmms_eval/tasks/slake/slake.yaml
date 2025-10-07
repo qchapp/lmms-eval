@@ -33,4 +33,4 @@ lmms_eval_specific_kwargs:
     q_lang: "en"
     pre_prompt: ""
     # Give the model a tiny nudge for short answers
-    post_prompt: "Answer concisely. If the answer is yes or no, reply exactly 'Yes' or 'No'."
+    post_prompt: "Answer with a single short word or phrase only (no punctuation, no explanation). If the answer is affirmative, reply 'Yes'; if negative, reply 'No'."
