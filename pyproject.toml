@@ -74,6 +74,7 @@ dependencies = [
     "protobuf",
     "sentence_transformers",
     "python-dotenv",
+    "huggingface_hub",
 ]
 
 [project.optional-dependencies]

@@ -1,10 +1,9 @@
-dataset_path: &repo flaviagiammarino/path-vqa
+dataset_path: flaviagiammarino/path-vqa
 
 task: "path_vqa"
 
-# Native splits: train / validation / test
 dataset_kwargs:
-  token: True      # dataset is public, but harmless to keep
+  token: True
 test_split: test
 
 output_type: generate_until
@@ -29,6 +28,5 @@ metadata:
 
 lmms_eval_specific_kwargs:
   default:
-    dataset_repo: *repo     # kept for consistency (unused here since images come inline)
     pre_prompt: ""
     post_prompt: "Answer with a single short word or phrase only (no punctuation, no explanation). If the answer is affirmative, reply 'Yes'; if negative, reply 'No'."

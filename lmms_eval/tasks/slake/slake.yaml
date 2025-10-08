@@ -2,9 +2,8 @@ dataset_path: &repo BoKelvin/SLAKE
 
 task: "slake"
 
-# Native splits are: train / validation / test
 dataset_kwargs:
-  token: True           # not strictly required (public), but safe to keep
+  token: True
 test_split: test        # use "validation" if you prefer the val set
 
 output_type: generate_until
@@ -32,5 +31,4 @@ lmms_eval_specific_kwargs:
     # Filter to English by default (dataset has en/zh). Change to "zh" to evaluate Chinese.
     q_lang: "en"
     pre_prompt: ""
-    # Give the model a tiny nudge for short answers
     post_prompt: "Answer with a single short word or phrase only (no punctuation, no explanation). If the answer is affirmative, reply 'Yes'; if negative, reply 'No'."
