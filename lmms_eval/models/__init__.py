@@ -89,6 +89,7 @@ AVAILABLE_CHAT_TEMPLATE_MODELS = {
     "vllm": "VLLM",
     "sglang": "Sglang",
     "huggingface": "Huggingface",
+    "multimeditron": "MultiMeditron",
     "async_openai": "AsyncOpenAIChat",
     "longvila": "LongVila",
 }
