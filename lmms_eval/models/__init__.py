@@ -24,6 +24,8 @@ AVAILABLE_SIMPLE_MODELS = {
     "from_log": "FromLog",
     "fuyu": "Fuyu",
     "gemini_api": "GeminiAPI",
+    "gpt4o_audio": "GPT4OAudio",
+    "gemma3": "Gemma3",
     "gpt4v": "GPT4V",
     "idefics2": "Idefics2",
     "instructblip": "InstructBLIP",
@@ -35,6 +37,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "llava": "Llava",
     "llava_hf": "LlavaHf",
     "llava_onevision": "Llava_OneVision",
+    "llava_onevision1_5": "Llava_OneVision1_5",
     "llava_onevision_moviechat": "Llava_OneVision_MovieChat",
     "llava_sglang": "LlavaSglang",
     "llava_vid": "LlavaVid",
@@ -78,8 +81,18 @@ AVAILABLE_SIMPLE_MODELS = {
     "vora": "VoRA",
 }
 
-AVAILABLE_CHAT_TEMPLATE_MODELS = {"llava_hf": "LlavaHf", "qwen2_5_vl": "Qwen2_5_VL", "openai_compatible": "OpenAICompatible", "vllm": "VLLM", "sglang": "Sglang", "huggingface": "Huggingface", "async_openai": "AsyncOpenAIChat", "multimeditron": "MultiMeditron"}
-    
+AVAILABLE_CHAT_TEMPLATE_MODELS = {
+    "llava_hf": "LlavaHf",
+    "qwen2_5_vl": "Qwen2_5_VL",
+    "thyme": "Thyme",
+    "openai_compatible": "OpenAICompatible",
+    "vllm": "VLLM",
+    "sglang": "Sglang",
+    "huggingface": "Huggingface",
+    "multimeditron": "MultiMeditron",
+    "async_openai": "AsyncOpenAIChat",
+    "longvila": "LongVila",
+}
 
 
 def get_model(model_name, force_simple: bool = False):

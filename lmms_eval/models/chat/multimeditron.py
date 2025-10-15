@@ -1,5 +1,6 @@
 import logging
 from typing import List, Tuple, Optional, Dict, Any
+from multimeditron.dataset.loader import FileSystemImageLoader, RawImageLoader
 from multimeditron.model.model import MultiModalModelForCausalLM
 from multimeditron.model.data_loader import DataCollatorForMultimodal
 import torch
@@ -41,11 +42,14 @@ class MultiMeditron(lmms):
 
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        loader = RawImageLoader()
+
         attachment_token_idx = self.tokenizer.convert_tokens_to_ids(attachment_token) 
         self.collator = DataCollatorForMultimodal(
                 tokenizer=self.tokenizer,
                 tokenizer_type=tokenizer_type,
                 modality_processors=self.model.processors(), 
+                modality_loaders={"image" : loader},
                 attachment_token_idx=attachment_token_idx,
                 add_generation_prompt=True,
         )
@@ -75,8 +79,7 @@ class MultiMeditron(lmms):
             batch = self.collator(batch_messages)
 
             outputs = self.model.generate(
-                input_ids=batch["input_ids"],
-                processed_multimodal_inputs=batch["processed_multimodal_inputs"],
+                batch=batch,
                 **single_gen_kwargs
             )
 
