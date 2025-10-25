@@ -1,43 +1,15 @@
-# utils_pmc_vqa.py
 from __future__ import annotations
 
-import json
 import os
 import re
 import zipfile
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
-
 from PIL import Image
 from loguru import logger as eval_logger
-
-try:
-    from huggingface_hub import snapshot_download
-except Exception:
-    snapshot_download = None  # handled gracefully
+from huggingface_hub import snapshot_download
 
 CHOICE_LETTERS = ["A", "B", "C", "D"]
-
-# ---------------------------
-# Debug logging (opt-in)
-# ---------------------------
-DEBUG_PATH = os.environ.get("LMMS_DEBUG_SAMPLES")
-DEBUG_MAX = int(os.environ.get("LMMS_DEBUG_MAX", "50"))
-
-def _debug_log(payload: Dict[str, Any]) -> None:
-    if not DEBUG_PATH:
-        return
-    try:
-        _debug_log._n += 1  # type: ignore[attr-defined]
-    except AttributeError:
-        _debug_log._n = 1  # type: ignore[attr-defined]
-    if _debug_log._n > DEBUG_MAX:  # type: ignore[attr-defined]
-        return
-    try:
-        with open(DEBUG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
 
 # ---------------------------
 # FS helpers
@@ -192,56 +164,7 @@ def pmc_vqa_doc_to_target(doc: Dict[str, Any]) -> str:
             return CHOICE_LETTERS[idx]
     return (doc.get("Answer") or doc.get("answer") or "").strip().upper()
 
-def pmc_vqa_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, Dict[str, Any]]:
-    pred_raw = results[0] if results else ""
-    pred = (pred_raw or "").strip()
-    target = pmc_vqa_doc_to_target(doc)
-
-    pred_letter = _extract_choice_letter(pred)
-    score = 1.0 if (pred_letter and pred_letter == target) else 0.0
-
-    qid = f"{doc.get('Figure_path','')}::{(doc.get('Question') or doc.get('question') or '').strip()}"[:256]
-
-    # DEBUG dump
-    _debug_log({
-        "task": "pmc_vqa",
-        "qid": qid,
-        "question": doc.get("Question", doc.get("question","")),
-        "choices": _collect_choices(doc),
-        "target_raw": target,
-        "pred_raw": pred_raw,
-        "pred_parsed": pred_letter,
-        "score": score,
-    })
-
-    return {"accuracy": {"question_id": qid, "score": score}}
-
-def pmc_vqa_aggregate_results(results: List[Dict[str, Any]]) -> float:
-    if not results:
-        return 0.0
-    total = 0.0
-    count = 0
-    for r in results:
-        # handle both {"accuracy":{...}} and flat {"score":...}
-        acc = r.get("accuracy", {}).get("score", None)
-        if acc is None:
-            acc = r.get("score", None)
-        if acc is None:
-            continue
-        total += float(acc)
-        count += 1
-    acc = (total / count) * 100.0 if count else 0.0
-    eval_logger.info(f"PMC-VQA Accuracy: {acc:.2f}")
-    return acc
-
 def pmc_vqa_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[Dict[str, Any]] = None) -> List[Image.Image]:
-    # Prefer inline image if dataset provided it
-    if "image" in doc and doc["image"] is not None:
-        try:
-            return [doc["image"].convert("RGB")]
-        except Exception:
-            pass
-
     repo_id = ""
     if lmms_eval_specific_kwargs:
         repo_id = lmms_eval_specific_kwargs.get("dataset_repo") or lmms_eval_specific_kwargs.get("dataset_path") or ""
@@ -273,3 +196,32 @@ def pmc_vqa_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Option
     except Exception as e:
         eval_logger.warning(f"Failed to open image {path}: {e}")
         return []
+    
+def pmc_vqa_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, Dict[str, Any]]:
+    pred_raw = results[0] if results else ""
+    pred = (pred_raw or "").strip()
+    target = pmc_vqa_doc_to_target(doc)
+
+    pred_letter = _extract_choice_letter(pred)
+    score = 1.0 if (pred_letter and pred_letter == target) else 0.0
+
+    qid = f"{doc.get('Figure_path','')}::{(doc.get('Question') or doc.get('question') or '').strip()}"[:256]
+
+    return {"accuracy": {"question_id": qid, "score": score}}
+
+def pmc_vqa_aggregate_results(results: List[Dict[str, Any]]) -> float:
+    if not results:
+        return 0.0
+    total = 0.0
+    count = 0
+    for r in results:
+        acc = r.get("accuracy", {}).get("score", None)
+        if acc is None:
+            acc = r.get("score", None)
+        if acc is None:
+            continue
+        total += float(acc)
+        count += 1
+    acc = (total / count) * 100.0 if count else 0.0
+    eval_logger.info(f"PMC-VQA Accuracy: {acc:.2f}")
+    return acc
