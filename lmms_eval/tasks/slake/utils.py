@@ -7,6 +7,7 @@ import re
 import zipfile
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
 
 from PIL import Image
 from loguru import logger as eval_logger
@@ -23,6 +24,28 @@ LANG_KEEP = "en"
 
 def _is_en(doc: Dict[str, Any]) -> bool:
     return str(doc.get("q_lang", "")).lower() == LANG_KEEP
+
+# ---------------------------
+# Paths / logging
+# ---------------------------
+# Optional JSONL "initial" logger: one record per sample with raw/parsed/normalized answers
+LOG_JSONL_PATH = os.environ.get("LMMS_LOG_JSONL")
+
+def _now_utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+def _append_jsonl(path: Optional[str], payload: Dict[str, Any]) -> None:
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except Exception:
+        pass
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as e:
+        eval_logger.warning(f"Failed to append JSONL to {path}: {e}")
 
 # ---------------------------
 # Debug logging (opt-in)
@@ -183,24 +206,49 @@ def slake_process_results(
     """Emit accuracy only for English items; non-English return {} (ignored by aggregator)."""
     if not _is_en(doc):
         return {}
+
+    # Raw model text (BEFORE any parsing)
     pred_raw = (results[0] if results else "") or ""
-    pred = _extract_final_answer(pred_raw)
-    p = _normalize_vqa(pred)
-    t = _normalize_vqa(slake_doc_to_target(doc))
-    score = 1.0 if (p == t and p != "") else 0.0
+
+    # Parse & normalize
+    parsed = _extract_final_answer(pred_raw)
+    pred_norm = _normalize_vqa(parsed)
+    target_norm = _normalize_vqa(slake_doc_to_target(doc))
+    score = 1.0 if (pred_norm == target_norm and pred_norm != "") else 0.0
     qid = str(doc.get("qid", "")) or f"{doc.get('img_name','')}::{doc.get('question','')}"[:256]
 
+    # Initial JSONL logger (raw + parsed + normalized)
+    _append_jsonl(LOG_JSONL_PATH, {
+        "ts": _now_utc_iso(),
+        "event": "model_eval",
+        "task": "slake",
+        "prompt_id": qid,
+        "question": doc.get("question", ""),
+        "raw_answer": pred_raw,
+        "parsed_answer": parsed,
+        "normalized_answer": pred_norm,
+        "target_raw": doc.get("answer", ""),
+        "target_norm": target_norm,
+        "score": score,
+        "meta": {
+            "q_lang": doc.get("q_lang"),
+            "img_name": doc.get("img_name"),
+        },
+    })
+
+    # Lightweight debug line (opt-in via LMMS_DEBUG_SAMPLES)
     _debug_log({
         "task": "slake",
         "qid": qid,
         "q_lang": doc.get("q_lang"),
         "question": doc.get("question",""),
         "target_raw": doc.get("answer",""),
-        "target_norm": t,
+        "target_norm": target_norm,
         "pred_raw": pred_raw,
-        "pred_norm": p,
+        "pred_norm": pred_norm,
         "score": score,
     })
+
     return {"accuracy": {"question_id": qid, "score": score}}
 
 def slake_aggregate_results(results: List[Dict[str, Any]]) -> float:
