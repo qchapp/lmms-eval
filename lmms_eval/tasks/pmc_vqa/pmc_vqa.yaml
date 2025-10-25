@@ -15,7 +15,7 @@ doc_to_text: !function utils.pmc_vqa_doc_to_text
 doc_to_target: !function utils.pmc_vqa_doc_to_target
 
 generation_kwargs:
-  max_new_tokens: 2048
+  max_new_tokens: 8
   temperature: 0.0
   do_sample: False
 
